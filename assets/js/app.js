@@ -745,6 +745,73 @@ function applyLabelToSelection() {
   notify('Rotulación aplicada.', 'success');
 }
 
+function attachSlashStyle(group) {
+  group.querySelector('.slash-style')?.remove();
+  const x1 = +group.dataset.x1;
+  const y1 = +group.dataset.y1;
+  const x2 = +group.dataset.x2;
+  const y2 = +group.dataset.y2;
+  const length = Math.hypot(x2 - x1, y2 - y1);
+  if (!length) return;
+  const step = 18;
+  const count = Math.max(1, Math.floor(length / step));
+  const ux = (x2 - x1) / length;
+  const uy = (y2 - y1) / length;
+  const nx = -uy;
+  const ny = ux;
+  const slashGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  slashGroup.setAttribute('class', 'slash-style');
+  for (let i = 1; i < count; i += 1) {
+    const s = i * step;
+    const px = x1 + ux * s;
+    const py = y1 + uy * s;
+    const len = 7;
+    const segment = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    segment.setAttribute('x1', px - nx * len);
+    segment.setAttribute('y1', py - ny * len);
+    segment.setAttribute('x2', px + nx * len);
+    segment.setAttribute('y2', py + ny * len);
+    segment.setAttribute('stroke', '#8e8e8e');
+    segment.setAttribute('stroke-width', '2');
+    slashGroup.appendChild(segment);
+  }
+  group.appendChild(slashGroup);
+}
+
+function updateLineGeometry(group, x1, y1, x2, y2) {
+  const line = group.querySelector('line');
+  if (!line) return;
+  const hadSlash = !!group.querySelector('.slash-style');
+  group.dataset.x1 = x1;
+  group.dataset.y1 = y1;
+  group.dataset.x2 = x2;
+  group.dataset.y2 = y2;
+  line.setAttribute('x1', x1);
+  line.setAttribute('y1', y1);
+  line.setAttribute('x2', x2);
+  line.setAttribute('y2', y2);
+  const endpoints = group.querySelectorAll('circle.endpoint');
+  if (endpoints[0]) {
+    endpoints[0].setAttribute('cx', x1);
+    endpoints[0].setAttribute('cy', y1);
+  }
+  if (endpoints[1]) {
+    endpoints[1].setAttribute('cx', x2);
+    endpoints[1].setAttribute('cy', y2);
+  }
+  const handles = layers.ui.querySelectorAll('.handle');
+  if (handles.length === 2) {
+    handles[0].setAttribute('cx', x1);
+    handles[0].setAttribute('cy', y1);
+    handles[1].setAttribute('cx', x2);
+    handles[1].setAttribute('cy', y2);
+  }
+  group.removeAttribute('transform');
+  if (hadSlash) {
+    attachSlashStyle(group);
+  }
+}
+
 function applyLineStyle(style) {
   if (!state.selected || state.selected.getAttribute('data-type') !== 'line') {
     notify('Selecciona una línea para aplicar estilo.', 'error');
@@ -771,34 +838,7 @@ function applyLineStyle(style) {
       return;
     }
     if (style === 'slash') {
-      const x1 = +state.selected.dataset.x1;
-      const y1 = +state.selected.dataset.y1;
-      const x2 = +state.selected.dataset.x2;
-      const y2 = +state.selected.dataset.y2;
-      const length = Math.hypot(x2 - x1, y2 - y1);
-      const step = 18;
-      const count = Math.max(1, Math.floor(length / step));
-      const ux = (x2 - x1) / length;
-      const uy = (y2 - y1) / length;
-      const nx = -uy;
-      const ny = ux;
-      const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      group.setAttribute('class', 'slash-style');
-      state.selected.appendChild(group);
-      for (let i = 1; i < count; i += 1) {
-        const s = i * step;
-        const px = x1 + ux * s;
-        const py = y1 + uy * s;
-        const len = 7;
-        const segment = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        segment.setAttribute('x1', px - nx * len);
-        segment.setAttribute('y1', py - ny * len);
-        segment.setAttribute('x2', px + nx * len);
-        segment.setAttribute('y2', py + ny * len);
-        segment.setAttribute('stroke', '#8e8e8e');
-        segment.setAttribute('stroke-width', '2');
-        group.appendChild(segment);
-      }
+      attachSlashStyle(state.selected);
     }
   });
   notify('Estilo de línea aplicado.', 'success');
@@ -807,12 +847,35 @@ function applyLineStyle(style) {
 function rotateSelection() {
   if (!state.selected) return;
   history.record(() => {
-    const bbox = state.selected.getBBox();
-    const cx = bbox.x + bbox.width / 2;
-    const cy = bbox.y + bbox.height / 2;
     const current = Number(state.selected.getAttribute('data-rot') || 0);
     const rotation = (current + 15) % 360;
-    state.selected.setAttribute('transform', `rotate(${rotation} ${cx} ${cy})`);
+    if (state.selected.getAttribute('data-type') === 'line') {
+      const x1 = +state.selected.dataset.x1;
+      const y1 = +state.selected.dataset.y1;
+      const x2 = +state.selected.dataset.x2;
+      const y2 = +state.selected.dataset.y2;
+      const cx = (x1 + x2) / 2;
+      const cy = (y1 + y2) / 2;
+      const angle = (15 * Math.PI) / 180;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const rotatePoint = (x, y) => {
+        const dx = x - cx;
+        const dy = y - cy;
+        return {
+          x: cx + dx * cos - dy * sin,
+          y: cy + dx * sin + dy * cos
+        };
+      };
+      const p1 = rotatePoint(x1, y1);
+      const p2 = rotatePoint(x2, y2);
+      updateLineGeometry(state.selected, p1.x, p1.y, p2.x, p2.y);
+    } else {
+      const bbox = state.selected.getBBox();
+      const cx = bbox.x + bbox.width / 2;
+      const cy = bbox.y + bbox.height / 2;
+      state.selected.setAttribute('transform', `rotate(${rotation} ${cx} ${cy})`);
+    }
     state.selected.setAttribute('data-rot', rotation);
   });
 }
@@ -837,6 +900,7 @@ function deleteSelection() {
 function enableMove() {
   if (!state.selected) return;
   let origin = null;
+  const isLine = state.selected.getAttribute('data-type') === 'line';
   const mouseDown = (event) => {
     history.begin();
     origin = svgPointFromEvent(event);
@@ -849,9 +913,17 @@ function enableMove() {
     const dx = point.x - origin.x;
     const dy = point.y - origin.y;
     origin = point;
-    const transform = dom.stage.createSVGTransform();
-    transform.setTranslate(dx, dy);
-    state.selected.transform.baseVal.appendItem(transform);
+    if (isLine) {
+      const x1 = +state.selected.dataset.x1 + dx;
+      const y1 = +state.selected.dataset.y1 + dy;
+      const x2 = +state.selected.dataset.x2 + dx;
+      const y2 = +state.selected.dataset.y2 + dy;
+      updateLineGeometry(state.selected, x1, y1, x2, y2);
+    } else {
+      const transform = dom.stage.createSVGTransform();
+      transform.setTranslate(dx, dy);
+      state.selected.transform.baseVal.appendItem(transform);
+    }
   };
   const mouseUp = () => {
     history.finalize();
